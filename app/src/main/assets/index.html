@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Fahrstunden</title>
+<style>
+*{box-sizing:border-box}
+:root{--blue:#1565c0;--line:#d6dbe1;--bg:#f4f6f8;--dark:#1d2733}
+body{margin:0;font-family:Arial,sans-serif;background:var(--bg);color:var(--dark)}
+header{position:sticky;top:0;z-index:20;background:white;border-bottom:1px solid #ccd2d8;padding:8px 8px 6px}
+h1{font-size:18px;margin:0 0 6px}
+.toolbar{display:flex;gap:5px;flex-wrap:wrap}
+button,.fileBtn{border:0;border-radius:6px;background:var(--blue);color:#fff;padding:7px 9px;font-size:12px;font-weight:600}
+button.secondary{background:#607080}
+button.danger{background:#c62828}
+button.light{background:#e9eef3;color:#1d2733}
+input,textarea{font:inherit}
+textarea{width:100%;min-height:74px;border:1px solid #c8ced5;border-radius:6px;padding:7px;margin-top:6px}
+.panel{background:white;margin:7px;border:1px solid #d7dce1;border-radius:7px;padding:7px}
+.panelTitle{font-size:12px;font-weight:700;margin-bottom:4px}
+.hidden{display:none!important}
+
+.wrap{overflow:auto;margin:7px;border:1px solid #cfd5da;border-radius:7px;background:white}
+table{border-collapse:collapse;width:max-content;min-width:100%;table-layout:fixed}
+th,td{border:1px solid var(--line)}
+thead th{position:sticky;top:0;z-index:10;background:#eef3f7;height:34px;font-size:11px}
+th.time{width:50px;min-width:50px}
+th.person{width:120px;min-width:120px;text-align:left;padding:4px}
+.day{width:118px;min-width:118px}
+td.time{background:#f7f8fa;color:#59636d;font-size:9px;text-align:right;padding-right:3px;height:22px}
+.personCell{background:#fff;vertical-align:top;padding:4px;position:sticky;left:0;z-index:5}
+.personName{font-size:11px;font-weight:700;white-space:normal;word-break:break-word}
+.personBtns{display:flex;gap:3px;margin-top:4px}
+.personBtns button{font-size:9px;padding:3px 5px}
+.slot{height:22px;background:#fff;position:relative;padding:0}
+.slot.hour{border-top:1px solid #aeb7c0}
+.bar{position:absolute;left:3px;right:3px;top:1px;bottom:1px;border-radius:3px;background:#42a5f5;opacity:.9}
+.bar span{display:none}
+.noavail{background:#fafafa}
+.dayHeader{font-weight:700}
+.small{font-size:10px;color:#66727e}
+#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#222;color:#fff;padding:9px 13px;border-radius:7px;font-size:12px;z-index:100;display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>Fahrstunden – Wochenübersicht</h1>
+  <div class="toolbar">
+    <button onclick="addPerson()">+ Person</button>
+    <button onclick="toggleImport()">Text eingeben</button>
+    <button onclick="voice()">🎤 Stimme</button>
+    <button class="light" onclick="exportJson()">Sicherung</button>
+    <button class="light" onclick="document.getElementById('restore').click()">Sicherung laden</button>
+    <button class="light" onclick="window.print()">Drucken</button>
+    <button class="light" onclick="pdf()">PDF</button>
+  </div>
+  <input id="restore" type="file" accept=".json" style="display:none" onchange="importJson(this)">
+</header>
+
+<section id="importPanel" class="panel hidden">
+  <div class="panelTitle">Verfügbarkeit als Text einfügen</div>
+  <div class="small">Beispiel: „Lisa Montag 7-9, Dienstag ab 15:30“. „ab“ ohne Ende bedeutet 23:30.</div>
+  <textarea id="importText" placeholder="Hier kopierten Text einfügen..."></textarea>
+  <div class="toolbar" style="margin-top:5px">
+    <button onclick="parseText()">Übernehmen</button>
+    <button class="secondary" onclick="toggleImport()">Schließen</button>
+  </div>
+</section>
+
+<div class="wrap">
+<table id="grid"></table>
+</div>
+<div id="toast"></div>
+
+<script>
+const DAYS=["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"];
+const START=7*60, END=23*60+30, STEP=15;
+let people=JSON.parse(localStorage.getItem("fahrstunden_people")||"null")||[
+ {name:"Doina",days:{Montag:[["14:00","23:30"]],Dienstag:[["15:00","23:30"]],Mittwoch:[["14:00","23:30"]],Donnerstag:[["15:00","23:30"]],Freitag:[["14:00","23:30"]]}},
+ {name:"Lisa",days:{Montag:[["07:00","09:00"]],Dienstag:[["15:30","23:30"]],Donnerstag:[["15:30","23:30"]]}},
+ {name:"Daniela",days:{Montag:[["16:00","23:30"]],Dienstag:[["16:00","23:30"]],Mittwoch:[["16:00","23:30"]],Donnerstag:[["16:00","23:30"]],Freitag:[["16:00","23:30"]],Samstag:[["07:00","23:30"]]}},
+ {name:"Dina",days:{Montag:[["07:00","23:30"]],Dienstag:[["07:00","23:30"]],Mittwoch:[["07:00","23:30"]],Donnerstag:[["07:00","23:30"]],Freitag:[["07:00","23:30"]]}},
+ {name:"Ion",days:{Montag:[["07:00","19:00"]],Dienstag:[["11:00","19:00"]],Mittwoch:[["11:00","19:00"]],Donnerstag:[["11:00","19:00"]],Freitag:[["11:00","19:00"]]}},
+ {name:"Anastasja",days:{Montag:[["18:30","23:30"]],Dienstag:[["18:30","23:30"]],Mittwoch:[["16:30","23:30"]],Donnerstag:[["18:30","23:30"]],Freitag:[["18:30","23:30"]]}},
+ {name:"Luka",days:{Montag:[["14:30","23:30"]],Dienstag:[["17:00","23:30"]],Mittwoch:[["17:00","23:30"]],Donnerstag:[["17:00","23:30"]],Freitag:[["16:45","23:30"]]}}
+];
+save(); render();
+
+function save(){localStorage.setItem("fahrstunden_people",JSON.stringify(people))}
+function mins(s){let [h,m]=s.split(":").map(Number);return h*60+m}
+function fmt(n){return String(Math.floor(n/60)).padStart(2,"0")+":"+String(n%60).padStart(2,"0")}
+function toast(t){let e=document.getElementById("toast");e.textContent=t;e.style.display="block";setTimeout(()=>e.style.display="none",1800)}
+function render(){
+ let g=document.getElementById("grid");
+ let h="<thead><tr><th class='time'>Zeit</th><th class='person'>Person</th>";
+ DAYS.forEach(d=>h+="<th class='day dayHeader'>"+d+"</th>");
+ h+="</tr></thead><tbody>";
+ for(let i=0;i<people.length;i++){
+   let p=people[i];
+   h+="<tr><td class='time' rowspan='"+((END-START)/STEP)+"'></td>";
+   h+="<td class='personCell' rowspan='"+((END-START)/STEP)+"'><div class='personName'>"+esc(p.name)+"</div>";
+   h+="<div class='personBtns'><button class='light' onclick='editPerson("+i+")'>Bearb.</button><button class='danger' onclick='delPerson("+i+")'>X</button></div></td>";
+   for(let r=0;r<(END-START)/STEP;r++){
+      if(r>0) h+="<tr>";
+      h+="<td class='slot' data-day='"+DAYS[0]+"' data-r='"+r+"'></td>";
+      for(let d=1;d<DAYS.length;d++) h+="<td class='slot' data-day='"+DAYS[d]+"' data-r='"+r+"'></td>";
+      h+="</tr>";
+   }
+ }
+ h+="</tbody>";
+ g.innerHTML=h;
+ // fill time labels and bars
+ let rows=g.querySelectorAll("tbody tr");
+ let rowIndex=0;
+ for(let pi=0;pi<people.length;pi++){
+   for(let r=0;r<(END-START)/STEP;r++){
+     let tr=rows[rowIndex++];
+     if(r===0){
+       tr.children[0].textContent=fmt(START);
+     } else {
+       tr.children[0].textContent=fmt(START+r*STEP);
+     }
+     DAYS.forEach((d,di)=>{
+       let td=tr.children[2+di];
+       let t=START+r*STEP;
+       let ranges=(people[pi].days&&people[pi].days[d])||[];
+       if(ranges.some(x=>t>=mins(x[0]) && t<mins(x[1]))) {
+         td.innerHTML="<div class='bar'></div>";
+       }
+     });
+   }
+ }
+}
+function esc(s){return s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+function addPerson(){
+ let name=prompt("Name der Person:");
+ if(!name||!name.trim())return;
+ if(find(name)>=0){toast("Name existiert bereits");return}
+ people.push({name:name.trim(),days:{}});save();render();
+}
+function find(name){return people.findIndex(p=>p.name.toLowerCase()===name.trim().toLowerCase())}
+function editPerson(i){
+ let p=people[i], lines=[];
+ for(const d of DAYS) if(p.days[d]) lines.push(d+": "+p.days[d].map(x=>x[0]+"-"+x[1]).join(", "));
+ let txt=prompt("Zeiten für "+p.name+" bearbeiten.\nFormat: Montag 07:00-09:00, 14:00-16:00\n\n"+lines.join("\n"));
+ if(txt===null)return;
+ parsePersonText(p,txt);save();render();
+}
+function delPerson(i){if(confirm("Person "+people[i].name+" wirklich löschen?")){people.splice(i,1);save();render()}}
+function toggleImport(){document.getElementById("importPanel").classList.toggle("hidden")}
+function parseText(){
+ let t=document.getElementById("importText").value;
+ if(!t.trim())return;
+ let blocks=t.split(/\n+/).map(x=>x.trim()).filter(Boolean);
+ blocks.forEach(line=>{
+   let m=line.match(/^([^:]+):\s*(.*)$/);
+   if(!m)return;
+   let name=m[1].trim(), rest=m[2];
+   let i=find(name);
+   if(i<0){people.push({name,days:{}});i=people.length-1}
+   parsePersonText(people[i],rest);
+ });
+ save();render();toast("Text übernommen");document.getElementById("importText").value="";
+}
+function parsePersonText(p,text){
+ const re=new RegExp("("+DAYS.join("|")+")(?:\\s+|:)\\s*([^;]+?)(?=(?:\\s*(?:"+DAYS.join("|")+"))\\s*(?:\\s|:)|$)","gi");
+ let found=false,m;
+ while((m=re.exec(text))){
+   found=true;
+   let day=DAYS.find(d=>d.toLowerCase()===m[1].toLowerCase());
+   let ranges=parseRanges(m[2]);
+   if(ranges.length)p.days[day]=ranges;
+ }
+ if(!found){
+   DAYS.forEach(d=>{
+     let re2=new RegExp(d+"\\s*:?\\s*([^,;]+)","i"),mm=text.match(re2);
+     if(mm){let rr=parseRanges(mm[1]);if(rr.length)p.days[d]=rr}
+   })
+ }
+}
+function parseRanges(s){
+ let out=[];
+ let parts=s.split(/[,;]|\\s+und\\s+/i);
+ for(let part of parts){
+   part=part.trim().replace(/\\s+/g," ");
+   if(!part||part==="-"||/keine|nicht verfügbar/i.test(part))continue;
+   let m=part.match(/(?:ab\\s*)?(\\d{1,2})(?::(\\d{2}))?\\s*(?:-|bis)\\s*(\\d{1,2})(?::(\\d{2}))?/i);
+   if(m){out.push([norm(m[1],m[2]),norm(m[3],m[4])]);continue}
+   let a=part.match(/ab\\s*(\\d{1,2})(?::(\\d{2}))?/i);
+   if(a)out.push([norm(a[1],a[2]),"23:30"]);
+   else {
+     let one=part.match(/^(\\d{1,2})(?::(\\d{2}))?$/);
+     if(one)out.push([norm(one[1],one[2]),"23:30"]);
+   }
+ }
+ return out;
+}
+function norm(h,m){return String(h).padStart(2,"0")+":"+(m||"00")}
+function voice(){
+ if(window.AndroidBridge&&AndroidBridge.startVoice) AndroidBridge.startVoice();
+ else if("webkitSpeechRecognition" in window){
+   let r=new webkitSpeechRecognition();r.lang="de-DE";r.continuous=false;
+   r.onresult=e=>{document.getElementById("importText").value=e.results[0][0].transcript;toggleImport()};
+   r.start();
+ }else toast("Spracherkennung nicht verfügbar");
+}
+window.receiveVoiceText=function(t){document.getElementById("importPanel").classList.remove("hidden");document.getElementById("importText").value=t}
+function exportJson(){
+ let blob=new Blob([JSON.stringify(people,null,2)],{type:"application/json"});
+ let a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="fahrstunden-sicherung.json";a.click();
+}
+function importJson(inp){
+ let f=inp.files[0];if(!f)return;
+ let r=new FileReader();r.onload=()=>{try{people=JSON.parse(r.result);save();render();toast("Sicherung geladen")}catch(e){toast("Ungültige Sicherung")}};r.readAsText(f)
+}
+function pdf(){
+ if(window.AndroidBridge&&AndroidBridge.exportPdf) AndroidBridge.exportPdf();
+ else window.print();
+}
+</script>
+</body>
+</html>
